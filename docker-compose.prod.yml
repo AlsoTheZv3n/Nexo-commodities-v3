@@ -1,0 +1,79 @@
+# docker-compose.prod.yml — Production stack on Ubuntu VM
+# Services: postgres + backend (FastAPI) + nginx
+
+services:
+
+  # ── PostgreSQL ────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: nexo-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       nexo
+      POSTGRES_USER:     nexo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - nexo-pgdata:/var/lib/postgresql/data
+      - ./infra/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro   # auto-run on first start
+    ports:
+      - "127.0.0.1:5432:5432"   # only accessible locally
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexo -d nexo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nexo-net
+
+  # ── FastAPI Backend ───────────────────────────────────
+  backend:
+    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/nexo-backend:${IMAGE_TAG:-main}
+    container_name: nexo-backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL:      postgresql://nexo:${POSTGRES_PASSWORD}@postgres:5432/nexo
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      FINBERT_DEVICE:    cpu
+      LSTM_EPOCHS:       50
+      LSTM_LOOKBACK:     20
+    volumes:
+      - nexo-models:/app/models
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - nexo-net
+
+  # ── Nginx ─────────────────────────────────────────────
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: nexo-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infra/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./infra/ssl:/etc/nginx/ssl:ro
+      - nexo-frontend:/usr/share/nginx/html:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - nexo-net
+
+volumes:
+  nexo-pgdata:     # PostgreSQL data — persists across deploys
+  nexo-models:     # ML models
+  nexo-frontend:   # React build
+
+networks:
+  nexo-net:
+    driver: bridge

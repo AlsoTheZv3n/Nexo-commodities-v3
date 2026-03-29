@@ -1,0 +1,39 @@
+# docker-compose.staging.yml — same VM, different ports
+services:
+  backend:
+    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/nexo-backend:dev
+    container_name: nexo-backend-staging
+    restart: unless-stopped
+    environment:
+      SUPABASE_URL:      ${SUPABASE_URL}
+      SUPABASE_KEY:      ${SUPABASE_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      RAILWAY_ENV:       staging
+    volumes:
+      - nexo-models-staging:/app/models
+    ports:
+      - "127.0.0.1:8001:8000"
+    networks:
+      - nexo-staging
+
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: nexo-nginx-staging
+    restart: unless-stopped
+    ports:
+      - "8081:80"
+    volumes:
+      - ./infra/nginx-staging.conf:/etc/nginx/conf.d/default.conf:ro
+      - nexo-frontend-staging:/usr/share/nginx/html:ro
+    depends_on:
+      - backend
+    networks:
+      - nexo-staging
+
+volumes:
+  nexo-models-staging:
+  nexo-frontend-staging:
+
+networks:
+  nexo-staging:
+    driver: bridge
